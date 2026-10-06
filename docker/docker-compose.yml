@@ -37,8 +37,13 @@ services:
 
   server:
     build:
-      context: ..
+      # context is "." and not ".." because Coolify runs compose with
+      # --project-directory set to the repo root, and build contexts resolve
+      # against that, not against this file's folder. Upstream uses ".."
+      # because it expects you to run compose from inside docker/.
+      context: .
       dockerfile: Dockerfile
+
     restart: unless-stopped
     # No `init: true` here on purpose — the image makes tini PID 1 itself via
     # the Dockerfile ENTRYPOINT. pids_limit is the backstop: if something leaks
