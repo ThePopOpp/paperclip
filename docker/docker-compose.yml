@@ -1,17 +1,37 @@
+# Paperclip for Coolify — paperclip.channelcast.io
+#
+# Adapted from the upstream docker/docker-compose.yml. Three changes, each of
+# which matters:
+#
+#   1. The upstream server service declares only seven env vars, so provider
+#      keys and PAPERCLIP_ALLOWED_HOSTNAMES set in Coolify's UI would never
+#      reach the container. They are declared here.
+#   2. EXPOSURE is "private" upstream (LAN only). This instance is behind TLS
+#      on a public domain, so it must be "public".
+#   3. Upstream publishes Postgres on 5432 and the server on 3100, both on the
+#      host. Removed — Traefik reaches the server on Coolify's internal
+#      network, and publishing them would serve the app over plain HTTP on the
+#      bare VPS IP, around the certificate.
+#
+# This file lives at docker/docker-compose.yml in the fork
+# https://github.com/ThePopOpp/paperclip (branch master), because Coolify
+# re-reads the compose from the repo on every deploy and discards anything
+# typed into its "Docker compose content (raw)" box.
+#
+# Domain paperclip.channelcast.io -> service "server", port 3100.
 services:
   db:
     image: postgres:17-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: paperclip
-      POSTGRES_PASSWORD: paperclip
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}"
       POSTGRES_DB: paperclip
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U paperclip -d paperclip"]
       interval: 2s
       timeout: 5s
       retries: 30
-    ports:
-      - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
 
@@ -19,26 +39,43 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
-    # No `init: true` here on purpose. The image makes tini PID 1 itself
-    # (Dockerfile ENTRYPOINT), which covers every launch path -- compose, plain
-    # `docker run`, the quadlet units and the ECS task definition -- instead of
-    # one lever per orchestrator. Setting it here too would nest docker-init
-    # around tini and make tini warn that it is not PID 1 on every boot.
-    # pids_limit is the backstop: if something ever does leak processes again,
-    # this container hits its own ceiling and dies visibly rather than starving
-    # the whole host of pids.
+    restart: unless-stopped
+    # No `init: true` here on purpose — the image makes tini PID 1 itself via
+    # the Dockerfile ENTRYPOINT. pids_limit is the backstop: if something leaks
+    # processes, this container hits its own ceiling and dies visibly rather
+    # than starving the whole host of pids.
     pids_limit: 2048
-    ports:
-      - "3100:3100"
+    # expose, not ports: Traefik reaches this on Coolify's internal network.
+    # Publishing it on the host would serve the app over plain HTTP on the
+    # VPS IP, around the TLS certificate.
+    expose:
+      - "3100"
     environment:
-      DATABASE_URL: postgres://paperclip:paperclip@db:5432/paperclip
+      DATABASE_URL: "postgres://paperclip:${POSTGRES_PASSWORD}@db:5432/paperclip"
       PORT: "3100"
+      HOST: "0.0.0.0"
       SERVE_UI: "true"
+      PAPERCLIP_HOME: "/paperclip"
+
       PAPERCLIP_DEPLOYMENT_MODE: "authenticated"
-      PAPERCLIP_DEPLOYMENT_EXPOSURE: "private"
-      PAPERCLIP_PUBLIC_URL: "${PAPERCLIP_PUBLIC_URL:-http://localhost:3100}"
-      BETTER_AUTH_SECRET: "${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET must be set}"
+      # Internet-facing behind Traefik TLS. Upstream defaults to "private".
+      PAPERCLIP_DEPLOYMENT_EXPOSURE: "public"
+      PAPERCLIP_PUBLIC_URL: "${PAPERCLIP_PUBLIC_URL:?set PAPERCLIP_PUBLIC_URL}"
+      PAPERCLIP_ALLOWED_HOSTNAMES: "${PAPERCLIP_ALLOWED_HOSTNAMES:-}"
+
+      # Refuses to start without this.
+      BETTER_AUTH_SECRET: "${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET}"
+      PAPERCLIP_TOOL_ACTION_SIGNING_SECRET: "${PAPERCLIP_TOOL_ACTION_SIGNING_SECRET:-}"
+
+      # At least one is needed before any agent can actually run.
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
+
+      PAPERCLIP_TELEMETRY_DISABLED: "1"
+      DO_NOT_TRACK: "1"
     volumes:
+      # Database, secrets, agent workspaces and uploads.
       - paperclip-data:/paperclip
     depends_on:
       db:
