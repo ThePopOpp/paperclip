@@ -49,7 +49,14 @@ COPY packages/plugins/plugin-workspace-diff/package.json packages/plugins/plugin
 COPY patches/ patches/
 COPY scripts/link-plugin-dev-sdk.mjs scripts/
 
-RUN pnpm install --frozen-lockfile
+# Upstream's committed pnpm-lock.yaml does not satisfy --frozen-lockfile:
+# it fails with ERR_PNPM_LOCKFILE_CONFIG_MISMATCH on patchedDependencies.
+# Upstream's own CI (.github/workflows/docker.yml) works around this by
+# running `pnpm install --resolution-only --ignore-scripts --no-frozen-lockfile`
+# to refresh the lockfile before the image build, so the image is never
+# actually built from the committed lockfile. This does the equivalent in
+# one step.
+RUN pnpm install --no-frozen-lockfile
 
 FROM base AS rust-toolchain
 WORKDIR /app
